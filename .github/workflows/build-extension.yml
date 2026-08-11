@@ -1,0 +1,55 @@
+name: Build AttachmentGuard Chrome Extension
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Chrome Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build AttachmentGuard
+        run: npm run build
+
+      - name: Verify PDFium WASM
+        run: |
+          test -f dist/assets/pdfium.wasm
+          SIZE=$(stat -c%s dist/assets/pdfium.wasm)
+          echo "PDFium WASM size: $SIZE bytes"
+          test "$SIZE" -gt 1000000
+
+      - name: Verify extension manifest
+        run: |
+          test -f dist/manifest.json
+          echo "Chrome extension manifest found."
+
+      - name: Package extension
+        run: |
+          cd dist
+          zip -r ../AttachmentGuard-Chrome-Extension.zip .
+          cd ..
+
+      - name: Upload Chrome extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: AttachmentGuard-Chrome-Extension
+          path: AttachmentGuard-Chrome-Extension.zip
+          if-no-files-found: error
