@@ -1,42 +1,44 @@
-ATTACHMENTGUARD v0.4 — UPDATE STEPS
+ATTACHMENTGUARD v0.5 — UPDATE STEPS
 
 1. Extract this ZIP.
 2. Open your EXISTING GitHub repository:
    attachmentguard-extension
-3. Replace the repository files with everything from this ZIP.
+3. Replace repository files with everything from this ZIP.
 4. Commit to main.
 5. Open GitHub → Actions.
-6. Wait for "Build AttachmentGuard Chrome Extension" to turn green.
+6. Wait for Build AttachmentGuard Chrome Extension to turn green.
 7. Open the successful run.
 8. Download artifact:
    AttachmentGuard-Chrome-Extension
-9. Extract that artifact ZIP.
-10. Open:
-    chrome://extensions
-11. Remove the old AttachmentGuard development extension.
-12. Click "Load unpacked".
-13. Select the extracted artifact folder containing manifest.json.
-14. Confirm AttachmentGuard version is 0.4.0.
+9. Extract the artifact.
+10. Open chrome://extensions
+11. Remove the old AttachmentGuard extension OR click Remove, then Load unpacked.
+12. Select the new artifact folder containing manifest.json.
+13. Confirm version is 0.5.0.
 
-TEST
+TEST 1 — ENTER
 
-15. Open a PDF normally in Chrome.
-16. It should NOT show the old AttachmentGuard website/editor screen.
-17. It should look like a normal dark PDF viewer:
-    - thumbnails on left
-    - PDF pages in center
-    - compact toolbar at top
-18. Click the pencil icon.
-19. Hover PDF text. A subtle blue outline should appear.
-20. Click the text.
-21. Type the correction directly on the PDF.
+14. Open your invoice PDF.
+15. Click the pencil icon.
+16. Click a text object.
+17. Type the correction.
+18. Press Enter ONE TIME.
+19. Expected:
+      Saved ✓ — verified PDF edit
+    If the exact font is genuinely needed, the typed text must remain preserved while the font dialog is shown.
+    Canceling that dialog must return you to the same typed edit; you should not have to type it again.
+
+You can also click the blue ✓ beside the inline field instead of pressing Enter.
+
+TEST 2 — FILE NAME
+
+20. Click the PDF filename in the top-left toolbar.
+21. Replace it, for example:
+      Invoice 34413 - Corrected.pdf
 22. Press Enter.
-23. Wait for "Saved ✓ — verified PDF edit".
-24. Click Save.
-25. Chrome opens the Save dialog for the corrected PDF.
+23. Click Save.
+24. Chrome Save As should already contain:
+      Invoice 34413 - Corrected.pdf
 
-You can also click the AttachmentGuard extension toolbar icon while a PDF is open to toggle inline edit mode.
-
-NOTE:
-"Save" saves the corrected PDF to the user's computer.
-A universal extension cannot overwrite the source file on every remote website because each website controls its own server. Site-specific save-back adapters can be added later without changing PDFium.
+Shortcut:
+Ctrl+S = Save corrected PDF with the current toolbar filename.

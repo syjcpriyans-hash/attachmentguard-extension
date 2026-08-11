@@ -14,7 +14,7 @@ const cpLabel = ch => `${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase().p
 const S = {
   m:null, bytes:null, originalBytes:null, doc:0, ptr:0, pages:0, name:"document.pdf",
   originalUrl:"", tabId:null, zoom:1, fitScale:1, editMode:false, dirty:false,
-  pageMetrics:[], history:[], currentPage:0, inline:null, pendingFont:null, resolvedFont:null
+  pageMetrics:[], history:[], currentPage:0, inline:null, pendingFont:null, resolvedFont:null, commitBusy:false, filenameOriginal:""
 };
 
 function rt(){
@@ -432,71 +432,179 @@ function setEditMode(on){
   S.editMode=!!on;document.body.classList.toggle("editing",S.editMode);$("editBtn").classList.toggle("active",S.editMode);
   if(!S.editMode)cancelInline();toast(S.editMode?"Inline edit mode on":"View mode")
 }
+function removeInlineDom(inline=S.inline){
+  if(!inline)return;
+  try{inline.input?.remove()}catch{}
+  try{inline.hint?.remove()}catch{}
+  try{inline.actions?.remove()}catch{}
+}
 function cancelInline(){
-  if(S.inline){S.inline.input.remove();S.inline.hint.remove();S.inline=null}
+  if(S.commitBusy)return;
+  removeInlineDom();
+  S.inline=null;
+}
+function setInlineBusy(busy,message="Verifying…"){
+  if(!S.inline)return;
+  S.commitBusy=busy;
+  S.inline.input.disabled=busy;
+  S.inline.input.classList.toggle("busy",busy);
+  if(S.inline.hint)S.inline.hint.textContent=busy?message:"Enter or ✓ = save • Esc or × = cancel";
+  if(S.inline.saveButton)S.inline.saveButton.disabled=busy;
+  if(S.inline.cancelButton)S.inline.cancelButton.disabled=busy;
 }
 function startInline(obj,hit,shell,scale){
+  if(S.commitBusy)return;
   cancelInline();S.resolvedFont=null;
   const b=obj.bounds,input=document.createElement("input"),hint=document.createElement("div");
+  const actions=document.createElement("div"),saveButton=document.createElement("button"),cancelButton=document.createElement("button");
+
   input.className="inline-editor";input.value=obj.text;input.spellcheck=false;
   input.style.left=`${b.left*scale}px`;input.style.top=`${(S.pageMetrics[obj.page].height-b.top)*scale}px`;
   input.style.width=`${Math.max(120,(b.right-b.left)*scale+36)}px`;
   input.style.height=`${Math.max(24,(b.top-b.bottom)*scale+8)}px`;
   input.style.fontSize=`${Math.max(11,obj.style.size*scale)}px`;
-  hint.className="inline-hint";hint.textContent="Enter = save • Esc = cancel";
+
+  hint.className="inline-hint";hint.textContent="Enter or ✓ = save • Esc or × = cancel";
   hint.style.left=input.style.left;hint.style.top=`${(S.pageMetrics[obj.page].height-b.bottom)*scale+7}px`;
-  shell.append(input,hint);S.inline={obj,input,hint,shell,scale};input.focus();input.select();
+
+  actions.className="inline-actions";
+  actions.style.left=`${b.left*scale+Math.max(120,(b.right-b.left)*scale+36)+6}px`;
+  actions.style.top=input.style.top;
+
+  saveButton.className="inline-action save";saveButton.type="button";saveButton.textContent="✓";saveButton.title="Save verified edit";
+  cancelButton.className="inline-action cancel";cancelButton.type="button";cancelButton.textContent="×";cancelButton.title="Cancel edit";
+  actions.append(saveButton,cancelButton);
+
+  shell.append(input,hint,actions);
+  S.inline={obj,input,hint,actions,saveButton,cancelButton,shell,scale};
+
+  saveButton.onclick=async e=>{e.preventDefault();e.stopPropagation();await queueInlineCommit()};
+  cancelButton.onclick=e=>{e.preventDefault();e.stopPropagation();cancelInline()};
+
+  let composing=false;
+  input.addEventListener("compositionstart",()=>{composing=true});
+  input.addEventListener("compositionend",()=>{composing=false});
   input.addEventListener("keydown",async e=>{
-    if(e.key==="Escape"){e.preventDefault();cancelInline()}
-    if(e.key==="Enter"){e.preventDefault();await commitInline()}
-  })
+    if(e.key==="Escape"&&!S.commitBusy){e.preventDefault();e.stopPropagation();cancelInline();return}
+    if(e.key==="Enter"){
+      e.preventDefault();e.stopPropagation();
+      if(e.repeat||composing||e.isComposing||e.keyCode===229)return;
+      await queueInlineCommit();
+    }
+  });
+
+  input.focus();
+  input.select();
+}
+async function queueInlineCommit(resolverOverride=null){
+  if(!S.inline||S.commitBusy)return;
+  // Yield one microtask so the input's latest value is guaranteed to be visible.
+  await Promise.resolve();
+  if(!S.inline||S.commitBusy)return;
+  await commitInline(resolverOverride);
 }
 async function commitInline(resolverOverride=null){
-  if(!S.inline)return;
-  const selected=S.inline.obj,newText=S.inline.input.value;
+  if(!S.inline||S.commitBusy)return;
+  const selected=S.inline.obj;
+  const newText=String(S.inline.input.value ?? "");
   if(!newText.length){toast("Empty replacement is not allowed","err");return}
   if(newText===selected.text){cancelInline();return}
-  S.inline.input.disabled=true;S.inline.hint.textContent="Verifying…";
+
+  setInlineBusy(true,"Verifying PDF edit…");
   try{
+    const before=S.bytes.slice();
     const result=await editTransaction(selected,newText,resolverOverride);
-    S.history.push(S.bytes.slice());if(S.history.length>30)S.history.shift();
+    S.history.push(before);if(S.history.length>30)S.history.shift();
     openBytes(result.out);S.dirty=true;$("undoBtn").disabled=false;$("saveBtn").classList.add("dirty");
-    cancelInline();await renderAll();toast("Saved ✓ — verified PDF edit","ok")
+
+    // Clear the edit UI only AFTER the verified output has become the working PDF.
+    const oldInline=S.inline;
+    S.inline=null;S.commitBusy=false;removeInlineDom(oldInline);
+    await renderAll();
+    toast("Saved ✓ — verified PDF edit","ok");
   }catch(e){
+    S.commitBusy=false;
     if(e.code==="EXACT_FONT_REQUIRED"){
-      S.pendingFont={selected,newText};cancelInline();openFontModal(e.message)
+      // IMPORTANT: preserve the user's exact typed value and object.
+      S.pendingFont={selected,newText};
+      if(S.inline){
+        S.inline.input.disabled=false;S.inline.input.classList.remove("busy");
+        S.inline.hint.textContent="Exact font required — your correction is preserved";
+        S.inline.saveButton.disabled=false;S.inline.cancelButton.disabled=false;
+      }
+      openFontModal(e.message);
     }else{
-      S.inline && (S.inline.input.disabled=false,S.inline.hint.textContent="Enter = retry • Esc = cancel");
-      toast(e.message,"err")
+      if(S.inline){
+        S.inline.input.disabled=false;
+        S.inline.input.classList.remove("busy");
+        S.inline.hint.textContent="Enter or ✓ = retry • Esc or × = cancel";
+        S.inline.saveButton.disabled=false;
+        S.inline.cancelButton.disabled=false;
+        S.inline.input.focus();
+      }
+      toast(e.message,"err");
     }
   }
 }
 function openFontModal(reason){
   $("fontReason").textContent=reason+". AttachmentGuard will not substitute another font.";
-  $("fontStatus").textContent="";$("fontModal").classList.add("open")
+  $("fontStatus").textContent="Your typed correction is preserved. Resolve the exact font and AttachmentGuard will apply it automatically.";
+  $("fontModal").classList.add("open")
 }
-function closeFontModal(){S.pendingFont=null;S.resolvedFont=null;$("fontModal").classList.remove("open");$("fontUpload").value=""}
+function closeFontModal(){
+  S.pendingFont=null;S.resolvedFont=null;$("fontModal").classList.remove("open");$("fontUpload").value="";
+  // Canceling the font prompt does NOT discard the user's typed edit.
+  if(S.inline){
+    S.inline.input.disabled=false;S.inline.input.classList.remove("busy");
+    S.inline.hint.textContent="Exact font unresolved — edit is still here • Enter or ✓ to retry";
+    S.inline.saveButton.disabled=false;S.inline.cancelButton.disabled=false;S.inline.input.focus();
+  }
+}
 async function useResolvedFont(v){
   if(!v?.ok){$("fontStatus").textContent=v?.reason||"Exact font not found.";return}
-  S.resolvedFont=v;await rememberFont(v);$("fontStatus").textContent=`Exact font resolved ✅ ${v.label||v.source}. Applying edit…`;
-  const pending=S.pendingFont;if(!pending)return;S.pendingFont=null;$("fontModal").classList.remove("open");
-  // Recreate a temporary inline state only so commitInline can reuse the transaction path.
-  S.inline={obj:pending.selected,input:{value:pending.newText,disabled:false},hint:{textContent:""},shell:null,scale:1};
+  S.resolvedFont=v;await rememberFont(v);
+  $("fontStatus").textContent=`Exact font resolved ✅ ${v.label||v.source}. Applying your preserved edit…`;
+  const pending=S.pendingFont;if(!pending)return;
+  S.pendingFont=null;$("fontModal").classList.remove("open");
+
+  // Keep the real inline input intact until the transaction passes.
+  if(!S.inline){
+    toast("The inline edit is no longer active. Click the text once more.","err");
+    return;
+  }
+
+  setInlineBusy(true,"Applying exact font and verifying…");
   try{
+    const before=S.bytes.slice();
     const result=await editTransaction(pending.selected,pending.newText,v);
-    S.history.push(S.bytes.slice());if(S.history.length>30)S.history.shift();
+    S.history.push(before);if(S.history.length>30)S.history.shift();
     openBytes(result.out);S.dirty=true;$("undoBtn").disabled=false;$("saveBtn").classList.add("dirty");
-    S.inline=null;await renderAll();toast("Saved ✓ — exact font verified","ok")
-  }catch(e){S.inline=null;toast(e.message,"err")}
+
+    const oldInline=S.inline;
+    S.inline=null;S.commitBusy=false;removeInlineDom(oldInline);
+    await renderAll();
+    toast("Saved ✓ — exact font verified","ok")
+  }catch(e){
+    S.commitBusy=false;
+    if(S.inline){
+      S.inline.input.disabled=false;S.inline.input.classList.remove("busy");
+      S.inline.hint.textContent="Font resolved, but verification failed • Enter or ✓ to retry";
+      S.inline.saveButton.disabled=false;S.inline.cancelButton.disabled=false;S.inline.input.focus();
+    }
+    toast(e.message,"err")
+  }
 }
 $("findInstalledFont").onclick=async()=>{
-  if(!S.pendingFont)return;$("fontStatus").textContent="Chrome may ask permission to access installed fonts…";
-  const v=await findInstalled(S.pendingFont.selected.style,S.pendingFont.newText);await useResolvedFont(v)
+  if(!S.pendingFont)return;
+  $("fontStatus").textContent="Chrome may ask permission to access installed fonts…";
+  const v=await findInstalled(S.pendingFont.selected.style,S.pendingFont.newText);
+  await useResolvedFont(v)
 };
 $("fontUpload").onchange=async e=>{
   if(!S.pendingFont)return;const f=e.target.files?.[0];if(!f)return;
   const bytes=new Uint8Array(await f.arrayBuffer()),v=validateFontBytes(bytes,S.pendingFont.selected.style,S.pendingFont.newText,"uploaded");
-  if(v.ok)v.label=f.name;await useResolvedFont(v)
+  if(v.ok)v.label=f.name;
+  await useResolvedFont(v)
 };
 $("fontCancel").onclick=closeFontModal;
 
@@ -518,10 +626,42 @@ function fileNameFromDisposition(header,fallback){
   if(!header)return fallback;const utf=header.match(/filename\*=UTF-8''([^;]+)/i);if(utf){try{return decodeURIComponent(utf[1].replace(/^["']|["']$/g,""))}catch{}}
   const plain=header.match(/filename="?([^";]+)"?/i);return plain?plain[1]:fallback
 }
-async function downloadPdf(){
-  if(!S.bytes)return;const blob=new Blob([S.bytes],{type:"application/pdf"}),url=URL.createObjectURL(blob);
-  try{await chrome.downloads.download({url,filename:S.name,saveAs:true})}finally{setTimeout(()=>URL.revokeObjectURL(url),5000)}
+function normalizeDownloadName(raw){
+  let name=String(raw||"").trim();
+  name=name.replace(/[<>:"/\\|?*\u0000-\u001F]/g,"-").replace(/[. ]+$/g,"");
+  if(!name)name="document.pdf";
+  const stem=name.replace(/\.pdf$/i,"");
+  const reserved=/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+  name=(reserved.test(stem)?`_${stem}`:stem)+".pdf";
+  if(name.length>180){
+    const base=name.slice(0,176).replace(/[. ]+$/g,"");
+    name=`${base}.pdf`;
+  }
+  return name;
 }
+function applyFilenameFromToolbar({notify=false}={}){
+  const normalized=normalizeDownloadName($("filename").value);
+  $("filename").value=normalized;S.name=normalized;document.title=normalized;
+  if(notify)toast(`Filename set to ${normalized}`,"ok");
+  return normalized;
+}
+
+async function downloadPdf(){
+  if(!S.bytes)return;
+  const filename=applyFilenameFromToolbar();
+  const blob=new Blob([S.bytes],{type:"application/pdf"}),url=URL.createObjectURL(blob);
+  try{
+    await chrome.downloads.download({
+      url,
+      filename,
+      saveAs:true,
+      conflictAction:"uniquify"
+    })
+  }finally{
+    setTimeout(()=>URL.revokeObjectURL(url),5000)
+  }
+}
+
 async function boot(){
   try{
     loading("Loading packaged PDFium engine…");
@@ -532,7 +672,7 @@ async function boot(){
     loading("Receiving PDF directly from Chrome…");
     const {info,bytes}=await streamPromise;S.originalUrl=info.originalUrl||"";S.tabId=info.tabId??null;
     let name=fileNameFromUrl(S.originalUrl);name=fileNameFromDisposition(streamHeader(info.responseHeaders,"content-disposition"),name);
-    S.name=name;S.originalBytes=bytes.slice();openBytes(bytes);$("filename").textContent=name;document.title=name;
+    S.name=name;S.filenameOriginal=name;S.originalBytes=bytes.slice();openBytes(bytes);$("filename").value=name;document.title=name;
     loading("Rendering PDF…");await renderAll();$("loading").classList.add("hidden");
   }catch(e){
     console.error(e);loading(`AttachmentGuard could not open this PDF: ${e.message}\nFalling back to Chrome viewer…`);
@@ -540,6 +680,22 @@ async function boot(){
   }
 }
 boot();
+
+$("filename").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();$("filename").blur();applyFilenameFromToolbar({notify:true})}
+  if(e.key==="Escape"){e.preventDefault();$("filename").value=S.name;$("filename").blur()}
+});
+$("filename").addEventListener("blur",()=>applyFilenameFromToolbar());
+$("filename").addEventListener("focus",()=>{$("filename").select()});
+
+window.addEventListener("keydown",async e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="s"){
+    e.preventDefault();await downloadPdf();return;
+  }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"&&!e.shiftKey&&document.activeElement!==$("filename")){
+    e.preventDefault();$("undoBtn").click();return;
+  }
+});
 
 $("editBtn").onclick=()=>setEditMode(!S.editMode);
 $("zoomIn").onclick=async()=>{S.zoom=Math.min(2.5,S.zoom+.1);await renderAll()};

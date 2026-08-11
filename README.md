@@ -1,43 +1,49 @@
-# AttachmentGuard v0.4 — Native-Look Inline PDF Editing
+# AttachmentGuard v0.5 — Reliable Inline Commit + Editable Filename
 
-This version intentionally removes the separate "editor website" experience.
+This is an incremental reliability release on top of the working v0.4 native-look PDF viewer.
+The PDFium/font engine architecture is unchanged.
 
-## Product UX
+## Fixed: first-Enter commit reliability
 
-1. User opens a PDF in Chrome.
-2. AttachmentGuard handles the PDF stream.
-3. The PDF opens in a Chrome-native-looking dark viewer:
-   - thumbnails on the left
-   - pages in the center
-   - page counter and zoom toolbar
-4. The user clicks the pencil icon (or AttachmentGuard toolbar icon).
-5. Existing PDF text becomes directly clickable in place.
-6. Click text → type directly over that text → Enter.
-7. AttachmentGuard runs the strict PDFium transaction:
-   - character/font preflight
-   - true PDF object edit
-   - page regeneration
-   - save
-   - reopen
-   - Unicode audit
-   - font/style/position verification
-   - collision check
-8. Only verified edits replace the working PDF.
-9. Save opens Chrome's Save dialog for the corrected PDF.
+Inline editing now has one transaction path shared by:
+- Enter
+- the visible ✓ save button
 
-## Important technical boundary
+Reliability protections:
+- commit lock prevents duplicate Enter/key-repeat transactions
+- composition/IME-safe Enter handling
+- latest input value is read after a microtask
+- inline input stays visible until PDFium save/reopen verification passes
+- failed verification keeps the user's typed correction in place
+- if an exact font is required, the typed correction is preserved while font resolution runs
+- canceling the font-resolution dialog returns to the same typed inline edit instead of forcing the user to start again
 
-Chrome does not expose an API that allows a third-party extension to modify the built-in Chrome PDF viewer itself.
-AttachmentGuard therefore uses Chrome's official PDF MIME handler and renders its own viewer designed to feel like the native viewer.
+## Added: editable filename
 
-The original PDF URL remains in Chrome's address bar.
+The filename in the top-left toolbar is now an input.
+Click it, type the desired output name, and press Enter or click elsewhere.
 
-## Exact-font behavior
+AttachmentGuard:
+- removes characters illegal in Windows filenames
+- ensures `.pdf`
+- prevents reserved Windows device names
+- uses the edited filename in `chrome.downloads.download`
+- opens Chrome Save As with that filename pre-filled
 
-No silent substitution.
-If the embedded PDF font cannot represent the new text:
-- search same PDF
-- search local Font Vault
-- ask for exact installed font
-- allow exact TTF/OTF upload
-- otherwise block
+Ctrl+S also saves using the current edited filename.
+
+## Test
+
+1. Open a PDF.
+2. Click pencil.
+3. Click a text object.
+4. Type a replacement.
+5. Press Enter ONCE.
+6. It should either:
+   - save and show `Saved ✓ — verified PDF edit`, or
+   - keep the exact typed edit visible and explain the precise verification/font blocker.
+   It should never silently discard the typed correction.
+7. Rename the PDF in the top-left filename field.
+8. Press Enter.
+9. Click Save.
+10. Chrome's Save As dialog should be pre-filled with the new filename.
