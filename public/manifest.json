@@ -2,37 +2,26 @@
   "manifest_version": 3,
   "name": "AttachmentGuard",
   "short_name": "AttachGuard",
-  "version": "0.3.0",
-  "description": "Open and edit PDF documents directly in Chrome using packaged PDFium with strict font/style verification.",
+  "version": "0.4.0",
+  "description": "View PDFs normally in Chrome, edit existing PDF text inline, verify with PDFium, and save the corrected copy.",
+  "minimum_chrome_version": "151",
   "permissions": [
-    "activeTab",
-    "scripting",
-    "sidePanel",
     "storage",
     "downloads"
-  ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://*/*",
-    "file:///*"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Open AttachmentGuard"
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
+    "default_title": "Toggle inline PDF editing"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
-  "minimum_chrome_version": "151",
   "mime_types_handler": {
     "application/pdf": {
-      "handler_url": "editor.html",
+      "handler_url": "viewer.html",
       "can_embed": true
     }
   }

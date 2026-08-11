@@ -8,8 +8,7 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        editor: resolve(__dirname, "editor.html"),
-        sidepanel: resolve(__dirname, "sidepanel.html"),
+        viewer: resolve(__dirname, "viewer.html"),
       },
     },
   },

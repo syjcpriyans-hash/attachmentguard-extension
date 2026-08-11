@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF</title>
+<style>
+:root{
+  font-family:Arial,Helvetica,sans-serif;
+  --toolbar:#3c4043; --sidebar:#292b2e; --workspace:#202124;
+  --text:#f1f3f4; --muted:#bdc1c6; --blue:#8ab4f8; --green:#34a853;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--workspace)}
+button,input{font:inherit}
+#app{height:100vh;display:grid;grid-template-rows:48px 1fr;color:var(--text)}
+.toolbar{
+  height:48px;background:var(--toolbar);display:grid;
+  grid-template-columns:minmax(220px,1fr) auto minmax(220px,1fr);
+  align-items:center;padding:0 12px;box-shadow:0 1px 3px rgba(0,0,0,.45);z-index:20;
+}
+.leftbar,.centerbar,.rightbar{display:flex;align-items:center;gap:7px}
+.centerbar{justify-content:center}
+.rightbar{justify-content:flex-end}
+.filename{font-size:13px;font-weight:600;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iconbtn{
+  border:0;background:transparent;color:#e8eaed;border-radius:4px;
+  width:34px;height:34px;display:grid;place-items:center;cursor:pointer;font-size:17px
+}
+.iconbtn:hover{background:rgba(255,255,255,.10)}
+.iconbtn:disabled{opacity:.35;cursor:default}
+.iconbtn.active{background:#5f6368;color:#fff}
+.pagebox,.zoombox{
+  min-width:34px;height:26px;border:0;border-radius:2px;background:#202124;color:#fff;
+  text-align:center;font-size:12px;padding:0 5px
+}
+.sep{width:1px;height:22px;background:#5f6368;margin:0 4px}
+.savebtn{
+  height:32px;border:1px solid #6b7075;background:transparent;color:#fff;border-radius:5px;
+  padding:0 11px;cursor:pointer;font-size:12px;font-weight:600
+}
+.savebtn:hover{background:#4b4f52}
+.savebtn.dirty{border-color:#8ab4f8;color:#d2e3fc}
+.body{min-height:0;display:grid;grid-template-columns:194px 1fr}
+.sidebar{
+  background:var(--sidebar);overflow:auto;border-right:1px solid #3a3d40;padding:12px 10px
+}
+.thumb{
+  width:100%;border:0;background:transparent;color:#fff;padding:7px 2px 10px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:5px;border-radius:3px
+}
+.thumb:hover{background:rgba(255,255,255,.06)}
+.thumb.active{background:rgba(138,180,248,.13)}
+.thumb canvas{max-width:116px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.thumb span{font-size:11px;color:#e8eaed}
+.workspace{position:relative;overflow:auto;background:var(--workspace);scroll-behavior:smooth}
+.pages{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 24px 90px;min-width:600px}
+.page-shell{position:relative;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.65);flex:none}
+.page-shell canvas{display:block}
+.text-layer{position:absolute;inset:0;pointer-events:none}
+body.editing .text-layer{pointer-events:auto}
+.text-hit{
+  position:absolute;border:1px solid transparent;background:transparent;padding:0;margin:0;cursor:text;
+  border-radius:2px;outline:none
+}
+body.editing .text-hit:hover{
+  border-color:#1a73e8;background:rgba(26,115,232,.08)
+}
+.inline-editor{
+  position:absolute;z-index:15;background:#fff;color:#111;border:2px solid #1a73e8;border-radius:2px;
+  padding:1px 3px;box-shadow:0 2px 8px rgba(0,0,0,.28);outline:none;min-width:50px;
+}
+.inline-hint{
+  position:absolute;z-index:16;background:#202124;color:#fff;border-radius:4px;padding:5px 7px;
+  font-size:10px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4)
+}
+.edit-banner{
+  position:fixed;top:58px;left:50%;transform:translateX(-50%);z-index:50;
+  background:#1a73e8;color:#fff;border-radius:18px;padding:6px 13px;font-size:12px;
+  box-shadow:0 3px 12px rgba(0,0,0,.35);display:none
+}
+body.editing .edit-banner{display:block}
+.toast{
+  position:fixed;right:22px;bottom:22px;z-index:100;background:#303134;color:#fff;
+  border-radius:7px;padding:10px 13px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.45);
+  opacity:0;transform:translateY(8px);pointer-events:none;transition:.18s
+}
+.toast.show{opacity:1;transform:none}
+.toast.ok{border-left:4px solid #34a853}.toast.err{border-left:4px solid #ea4335}
+.loading{
+  position:fixed;inset:48px 0 0 0;background:#202124;display:grid;place-items:center;z-index:200;
+  color:#e8eaed;font-size:13px
+}
+.loading.hidden{display:none}
+.spinner{width:30px;height:30px;border:3px solid #5f6368;border-top-color:#8ab4f8;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 10px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.modal-backdrop{
+  position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;display:none;place-items:center;padding:20px
+}
+.modal-backdrop.open{display:grid}
+.modal{
+  width:min(480px,100%);background:#fff;color:#202124;border-radius:9px;padding:18px;
+  box-shadow:0 12px 40px rgba(0,0,0,.5)
+}
+.modal h3{margin:0 0 8px;font-size:16px}.modal p{font-size:12px;line-height:1.5;color:#5f6368}
+.modal .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.modal button,.filelabel{
+  border:0;border-radius:5px;background:#1a73e8;color:#fff;padding:9px 12px;font-size:12px;
+  cursor:pointer;font-weight:600
+}
+.modal button.secondary,.filelabel.secondary{background:#eef1f5;color:#202124}
+.filelabel input{display:none}
+.modal-status{margin-top:10px;font-size:11px;white-space:pre-wrap;color:#5f6368}
+@media(max-width:800px){
+  .body{grid-template-columns:0 1fr}.sidebar{display:none}.toolbar{grid-template-columns:1fr auto 1fr}
+  .filename{max-width:140px}.pages{padding-left:10px;padding-right:10px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="toolbar">
+    <div class="leftbar">
+      <button class="iconbtn" title="Menu">☰</button>
+      <div id="filename" class="filename">PDF</div>
+    </div>
+    <div class="centerbar">
+      <input id="pageInput" class="pagebox" value="1" aria-label="Current page">
+      <span style="font-size:12px;color:#e8eaed">/ <span id="pageTotal">1</span></span>
+      <div class="sep"></div>
+      <button id="zoomOut" class="iconbtn" title="Zoom out">−</button>
+      <div id="zoomLabel" class="zoombox" style="display:grid;place-items:center">100%</div>
+      <button id="zoomIn" class="iconbtn" title="Zoom in">+</button>
+    </div>
+    <div class="rightbar">
+      <button id="undoBtn" class="iconbtn" title="Undo last verified edit" disabled>↶</button>
+      <button id="editBtn" class="iconbtn" title="Edit text directly">✎</button>
+      <button id="saveBtn" class="savebtn" title="Save corrected PDF">Save</button>
+      <button id="downloadBtn" class="iconbtn" title="Download corrected PDF">⇩</button>
+    </div>
+  </div>
+
+  <div class="body">
+    <aside id="sidebar" class="sidebar"></aside>
+    <main id="workspace" class="workspace"><div id="pages" class="pages"></div></main>
+  </div>
+</div>
+
+<div class="edit-banner">Inline edit mode — click text, type, press Enter to save · Esc to cancel</div>
+<div id="toast" class="toast"></div>
+<div id="loading" class="loading"><div><div class="spinner"></div><div id="loadingText">Opening PDF with AttachmentGuard…</div></div></div>
+
+<div id="fontModal" class="modal-backdrop">
+  <div class="modal">
+    <h3>Exact font required</h3>
+    <p id="fontReason">This edit needs the exact full font. AttachmentGuard will not substitute a similar font.</p>
+    <div class="row">
+      <button id="findInstalledFont">Find exact installed font</button>
+      <label class="filelabel secondary">Upload exact TTF / OTF<input id="fontUpload" type="file" accept=".ttf,.otf,font/ttf,font/otf,application/font-sfnt"></label>
+      <button id="fontCancel" class="secondary">Cancel</button>
+    </div>
+    <div id="fontStatus" class="modal-status"></div>
+  </div>
+</div>
+
+<script type="module" src="/src/viewer.js"></script>
+</body>
+</html>

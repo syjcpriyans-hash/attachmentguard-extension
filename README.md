@@ -1,38 +1,43 @@
-# AttachmentGuard Chrome Extension v0.3 — Native PDF Stream Handler
+# AttachmentGuard v0.4 — Native-Look Inline PDF Editing
 
-This version changes the Chrome integration layer, not the PDFium editor core.
+This version intentionally removes the separate "editor website" experience.
 
-## Why v0.3 exists
+## Product UX
 
-Chrome 151 introduced the public `chrome.mimeHandler` API. AttachmentGuard now registers for `application/pdf`, so Chrome can hand the extension the PDF response stream directly instead of trying to inspect Chrome's built-in PDF viewer.
+1. User opens a PDF in Chrome.
+2. AttachmentGuard handles the PDF stream.
+3. The PDF opens in a Chrome-native-looking dark viewer:
+   - thumbnails on the left
+   - pages in the center
+   - page counter and zoom toolbar
+4. The user clicks the pencil icon (or AttachmentGuard toolbar icon).
+5. Existing PDF text becomes directly clickable in place.
+6. Click text → type directly over that text → Enter.
+7. AttachmentGuard runs the strict PDFium transaction:
+   - character/font preflight
+   - true PDF object edit
+   - page regeneration
+   - save
+   - reopen
+   - Unicode audit
+   - font/style/position verification
+   - collision check
+8. Only verified edits replace the working PDF.
+9. Save opens Chrome's Save dialog for the corrected PDF.
 
-For real `application/pdf` documents this removes the fragile "detect the PDF viewer page and fetch the URL again" approach.
+## Important technical boundary
 
-## What Chrome now gives AttachmentGuard
+Chrome does not expose an API that allows a third-party extension to modify the built-in Chrome PDF viewer itself.
+AttachmentGuard therefore uses Chrome's official PDF MIME handler and renders its own viewer designed to feel like the native viewer.
 
-When Chrome loads a real PDF document, AttachmentGuard receives:
-- the original URL,
-- the actual response stream URL,
-- response headers,
-- whether the PDF is embedded,
-- the tab ID.
+The original PDF URL remains in Chrome's address bar.
 
-The stream is read once into memory and then passed to the existing PDFium editor.
+## Exact-font behavior
 
-## Supported by this foundation
-
-- top-level PDF navigations
-- PDFs opened from links
-- PDFs delivered through POST or single-use URLs
-- embedded PDF frames (`embed`, `object`, `iframe`) because `can_embed` is enabled
-- local PDF files handled as PDF documents
-- existing manual file picker fallback
-- existing PDFium/font verification/editor features
-
-## Honest boundary
-
-This handles documents Chrome recognizes as `application/pdf` occupying a frame. A website that renders pages into its own canvas/images and never exposes a PDF MIME stream is not a PDF document from Chrome's MIME-handler perspective; that type of custom viewer needs a source adapter.
-
-## Safety
-
-If AttachmentGuard cannot initialize/render a MIME-handled PDF, it asks Chrome to fall back to the native PDF viewer rather than trapping the user on a broken page.
+No silent substitution.
+If the embedded PDF font cannot represent the new text:
+- search same PDF
+- search local Font Vault
+- ask for exact installed font
+- allow exact TTF/OTF upload
+- otherwise block

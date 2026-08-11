@@ -1,42 +1,42 @@
-ATTACHMENTGUARD v0.3 — UPDATE + TEST
+ATTACHMENTGUARD v0.4 — UPDATE STEPS
 
-1. Extract the v0.3 source ZIP.
-2. Open your EXISTING GitHub repository: attachmentguard-extension.
-3. Upload/replace the files from this ZIP in the same repository.
-   Do not create a new repository and do not create a new Vercel project.
+1. Extract this ZIP.
+2. Open your EXISTING GitHub repository:
+   attachmentguard-extension
+3. Replace the repository files with everything from this ZIP.
 4. Commit to main.
 5. Open GitHub → Actions.
 6. Wait for "Build AttachmentGuard Chrome Extension" to turn green.
-7. Open the successful run → Artifacts → download AttachmentGuard-Chrome-Extension.
-8. Extract the artifact ONCE. The extracted folder should directly contain manifest.json, editor.html, sidepanel.html, background.js and assets/.
-9. Open chrome://extensions.
-10. Remove the old AttachmentGuard development extension OR click Reload after replacing its folder. For the cleanest test, remove the old one and use Load unpacked on the newly extracted artifact folder.
-11. Confirm AttachmentGuard shows version 0.3.0.
+7. Open the successful run.
+8. Download artifact:
+   AttachmentGuard-Chrome-Extension
+9. Extract that artifact ZIP.
+10. Open:
+    chrome://extensions
+11. Remove the old AttachmentGuard development extension.
+12. Click "Load unpacked".
+13. Select the extracted artifact folder containing manifest.json.
+14. Confirm AttachmentGuard version is 0.4.0.
 
-FIRST PDF TEST
+TEST
 
-12. Open this direct PDF in a new tab:
-    https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf
-13. IMPORTANT: do not click the extension first.
-14. Because AttachmentGuard is now registered as Chrome's PDF handler, the PDF should open directly inside AttachmentGuard's editor while the original PDF URL remains in Chrome's address bar.
-15. Confirm ENGINE: PASS ✅.
-16. Confirm the PDF is rendered.
-17. Click/edit text if the PDF contains editable text objects.
-18. Download the corrected attachment.
+15. Open a PDF normally in Chrome.
+16. It should NOT show the old AttachmentGuard website/editor screen.
+17. It should look like a normal dark PDF viewer:
+    - thumbnails on left
+    - PDF pages in center
+    - compact toolbar at top
+18. Click the pencil icon.
+19. Hover PDF text. A subtle blue outline should appear.
+20. Click the text.
+21. Type the correction directly on the PDF.
+22. Press Enter.
+23. Wait for "Saved ✓ — verified PDF edit".
+24. Click Save.
+25. Chrome opens the Save dialog for the corrected PDF.
 
-PDF HANDLER TOGGLE
+You can also click the AttachmentGuard extension toolbar icon while a PDF is open to toggle inline edit mode.
 
-19. On a normal webpage, click the AttachmentGuard toolbar icon.
-20. The side panel shows "Chrome PDF handling".
-21. You can switch between AttachmentGuard and Chrome's normal PDF viewer without uninstalling the extension.
-
-IF A PDF CANNOT BE RENDERED
-
-AttachmentGuard calls Chrome's native PDF fallback. This is intentional professional behavior.
-
-IF SOMETHING FAILS
-
-Send ChatGPT:
-- screenshot of chrome://extensions showing AttachmentGuard version,
-- screenshot of the PDF tab,
-- screenshot of any GitHub Actions red step.
+NOTE:
+"Save" saves the corrected PDF to the user's computer.
+A universal extension cannot overwrite the source file on every remote website because each website controls its own server. Site-specific save-back adapters can be added later without changing PDFium.
