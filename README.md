@@ -1,51 +1,38 @@
-# AttachmentGuard Chrome Extension v0.1
+# AttachmentGuard Chrome Extension v0.3 — Native PDF Stream Handler
 
-## Product direction
+This version changes the Chrome integration layer, not the PDFium editor core.
 
-AttachmentGuard is no longer tied to Gmail or Zoho.
+## Why v0.3 exists
 
-The Chrome extension detects PDFs in the user's current browser workflow and routes them into the same professional PDFium editor core.
+Chrome 151 introduced the public `chrome.mimeHandler` API. AttachmentGuard now registers for `application/pdf`, so Chrome can hand the extension the PDF response stream directly instead of trying to inspect Chrome's built-in PDF viewer.
 
-### v0.1 source adapters
-- Direct PDF URL in the current Chrome tab
-- PDF URL found in `<embed>`, `<object>`, `<iframe>`, PDF links, and obvious PDF network resources on normal web pages
-- Local PDF through the editor's file picker
-- HTTP/HTTPS source permission requested only for the specific PDF origin
+For real `application/pdf` documents this removes the fragile "detect the PDF viewer page and fetch the URL again" approach.
 
-### Deliberately not faked in v0.1
-- `blob:` PDF capture: detected and clearly reported, but not yet captured
-- Universal server overwrite / “save back” to every website: impossible without each site's upload/API workflow
-- DOCX/XLSX/PPTX: separate document engines, not part of the PDFium core
+## What Chrome now gives AttachmentGuard
 
-## Core that remains unchanged
-- PDFium WebAssembly
-- True existing PDF text-object editing
-- Embedded/subset font handling
-- Font Vault
-- Exact-font resolution
-- Strict save/reopen verification
-- Verified search/replace
-- Undo/redo
-- Atomic replace-all
+When Chrome loads a real PDF document, AttachmentGuard receives:
+- the original URL,
+- the actual response stream URL,
+- response headers,
+- whether the PDF is embedded,
+- the tab ID.
 
-## Extension security
-- Manifest V3
-- PDFium and all JavaScript bundled inside the extension
-- No runtime CDN code
-- `activeTab` for user-invoked access
-- site access requested only when the user chooses a PDF source
-- PDF processing stays inside the browser/editor
+The stream is read once into memory and then passed to the existing PDFium editor.
 
-## How to build without VS Code
+## Supported by this foundation
 
-Upload this source repository to GitHub.
+- top-level PDF navigations
+- PDFs opened from links
+- PDFs delivered through POST or single-use URLs
+- embedded PDF frames (`embed`, `object`, `iframe`) because `can_embed` is enabled
+- local PDF files handled as PDF documents
+- existing manual file picker fallback
+- existing PDFium/font verification/editor features
 
-GitHub Actions automatically:
-1. installs the exact npm dependencies,
-2. bundles the extension with Vite,
-3. copies `pdfium.wasm` into the extension,
-4. validates the WASM file,
-5. creates `AttachmentGuard-Chrome-Extension.zip`,
-6. exposes it as a downloadable Actions artifact.
+## Honest boundary
 
-See `INSTALL-STEPS.txt`.
+This handles documents Chrome recognizes as `application/pdf` occupying a frame. A website that renders pages into its own canvas/images and never exposes a PDF MIME stream is not a PDF document from Chrome's MIME-handler perspective; that type of custom viewer needs a source adapter.
+
+## Safety
+
+If AttachmentGuard cannot initialize/render a MIME-handled PDF, it asks Chrome to fall back to the native PDF viewer rather than trapping the user on a broken page.

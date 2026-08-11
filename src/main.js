@@ -90,6 +90,38 @@ async function engineSelfTest() {
 }
 
 
+let mimeCapturePromise = null;
+
+function streamHeader(headers, name) {
+  if (!headers || typeof headers !== "object") return "";
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (String(key).toLowerCase() === target) return String(value ?? "");
+  }
+  return "";
+}
+
+async function captureMimeHandlerStream() {
+  if (!chrome.mimeHandler?.getStreamInfo) return null;
+  let info = null;
+  try {
+    info = await chrome.mimeHandler.getStreamInfo();
+  } catch {
+    return null;
+  }
+
+  try {
+    const response = await fetch(info.streamUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Chrome PDF stream returned HTTP ${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return { info, bytes };
+  } catch (error) {
+    return { info, error };
+  }
+}
+
+mimeCapturePromise = captureMimeHandlerStream();
+
 function pdfHeaderLooksValid(bytes) {
   const n = Math.min(bytes.length, 1024);
   let s = "";
@@ -115,6 +147,44 @@ function fileNameFromDisposition(header, fallback) {
   }
   const plain = header.match(/filename="?([^";]+)"?/i);
   return plain ? plain[1] : fallback;
+}
+
+async function loadMimeHandlerPdf(capture) {
+  if (!capture?.info) return false;
+  if (capture.error) throw capture.error;
+
+  const { info, bytes } = capture;
+  if (!bytes?.length || !pdfHeaderLooksValid(bytes)) {
+    throw new Error("Chrome supplied a stream that is not a valid PDF document");
+  }
+
+  const originalUrl = info.originalUrl || "";
+  let fileName = fileNameFromUrl(originalUrl);
+  fileName = fileNameFromDisposition(streamHeader(info.responseHeaders, "content-disposition"), fileName);
+
+  $("sourceContext")?.classList.remove("hidden");
+  if ($("sourceUrlText")) $("sourceUrlText").textContent = originalUrl || "Chrome PDF stream";
+  if ($("sourceLoadStatus")) {
+    $("sourceLoadStatus").className = "status ok";
+    $("sourceLoadStatus").textContent =
+      `Chrome PDF stream captured directly ✅\n${fileName} • ${bytes.length.toLocaleString()} bytes${info.embedded ? " • embedded document" : ""}`;
+  }
+  if ($("returnToSourceBtn")) {
+    $("returnToSourceBtn").textContent = "← Back";
+    $("returnToSourceBtn").classList.toggle("hidden", !!info.embedded);
+  }
+  if (info.embedded) document.body.classList.add("embedded-view");
+
+  S.history=[];S.redo=[];S.changes=[];S.originalBytes=bytes.slice();S.originalName=fileName;
+  S.name=fileName.replace(/\.pdf$/i,"")+"-AttachmentGuard.pdf";
+  openBytes(bytes);S.page=0;S.zoom=1;clearSearch({keepInputs:false});
+  $("docCard").classList.remove("hidden");$("workTools").classList.remove("hidden");
+  updateSessionUI();
+  await render();
+
+  setBox("engine", `ENGINE PASS ✅\n${fileName} loaded from Chrome's PDF stream — ${S.pages} page(s).`, "ok");
+  log(`Chrome MIME PDF loaded: ${originalUrl || "(no original URL)"}`);
+  return true;
 }
 
 async function loadExtensionSourcePdf(sourceUrl) {
@@ -206,18 +276,32 @@ async function boot() {
     $("openPdfLabel").style.opacity = "1";
     $("openPdfLabel").style.pointerEvents = "auto";
     log("PDFium engine health PASS");
-    const sourceParams = extensionSourceParams();
-    if (sourceParams.source) {
-      await loadExtensionSourcePdf(sourceParams.source);
-    } else if ($("sourceContext")) {
-      $("sourceContext").classList.add("hidden");
+    const mimeCapture = await mimeCapturePromise;
+    if (mimeCapture?.info) {
+      await loadMimeHandlerPdf(mimeCapture);
+    } else {
+      const sourceParams = extensionSourceParams();
+      if (sourceParams.source) {
+        await loadExtensionSourcePdf(sourceParams.source);
+      } else if ($("sourceContext")) {
+        $("sourceContext").classList.add("hidden");
+      }
     }
 
   } catch (e) {
     S.engineReady = false;
+    log(e.stack || e.message);
+    const mimeCapture = await mimeCapturePromise.catch(() => null);
+    if (mimeCapture?.info && chrome.mimeHandler?.abortAndFallbackToNativeHandler) {
+      try {
+        await chrome.mimeHandler.abortAndFallbackToNativeHandler();
+        return;
+      } catch (fallbackError) {
+        log(`Native PDF fallback failed: ${fallbackError.message}`);
+      }
+    }
     setHealth("ENGINE: FAILED ❌","err");
     setBox("engine",`PDFium ENGINE FAILED ❌\n${e.message}\n\nOpen Technical diagnostics for details.`,"err");
-    log(e.stack || e.message);
   }
 }
 $("selfTestBtn").onclick = async () => {

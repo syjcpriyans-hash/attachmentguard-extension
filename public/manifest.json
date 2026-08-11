@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "AttachmentGuard",
   "short_name": "AttachGuard",
-  "version": "0.1.0",
-  "description": "Edit PDFs you encounter in Chrome using a local PDFium engine with strict font/style verification.",
+  "version": "0.3.0",
+  "description": "Open and edit PDF documents directly in Chrome using packaged PDFium with strict font/style verification.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -28,5 +28,12 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "minimum_chrome_version": "151",
+  "mime_types_handler": {
+    "application/pdf": {
+      "handler_url": "editor.html",
+      "can_embed": true
+    }
   }
 }

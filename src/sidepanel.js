@@ -26,9 +26,22 @@ function labelFor(url, kind) {
   }
 }
 
-async function activeTab() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tabs[0] || null;
+async function getInvocationContext() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "ATTACHMENTGUARD_GET_INVOCATION" });
+    return response?.ok ? response.context : null;
+  } catch {
+    return null;
+  }
+}
+
+async function activeTabId() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tabs[0]?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function scanPage(tabId) {
@@ -72,8 +85,7 @@ async function scanPage(tabId) {
       },
     });
     return result || [];
-  } catch (error) {
-    // Chrome's built-in PDF viewer and chrome:// pages may not allow injection.
+  } catch {
     return [];
   }
 }
@@ -88,10 +100,8 @@ function originPattern(url) {
 async function ensureHostAccess(url) {
   const pattern = originPattern(url);
   if (!pattern) return { ok: url.startsWith("blob:"), pattern: null };
-
   const already = await chrome.permissions.contains({ origins: [pattern] });
   if (already) return { ok: true, pattern };
-
   try {
     const granted = await chrome.permissions.request({ origins: [pattern] });
     return { ok: granted, pattern };
@@ -101,15 +111,20 @@ async function ensureHostAccess(url) {
 }
 
 async function openEditor(sourceUrl = "") {
-  if (!currentTab) currentTab = await activeTab();
-  const returnUrl = currentTab?.url || "";
+  if (!currentTab?.id) {
+    $("message").className = "card status warn";
+    $("message").textContent = "Click the AttachmentGuard toolbar icon once on the tab you want to work with, then try again.";
+    return;
+  }
+
+  const returnUrl = currentTab.url || "";
   const params = new URLSearchParams();
   if (sourceUrl) params.set("source", sourceUrl);
   if (returnUrl) params.set("return", returnUrl);
 
   if (sourceUrl && sourceUrl.startsWith("blob:")) {
     $("message").className = "card status warn";
-    $("message").textContent = "This page uses a blob: PDF. The universal blob-capture adapter is the next source adapter. For now, download/open that PDF normally or use 'Open a PDF from my computer'.";
+    $("message").textContent = "This is a blob URL created by the webpage, not a normal PDF network URL. Real application/pdf streams are handled automatically by AttachmentGuard; custom blob viewers require a separate capture adapter.";
     return;
   }
 
@@ -117,7 +132,7 @@ async function openEditor(sourceUrl = "") {
     const access = await ensureHostAccess(sourceUrl);
     if (!access.ok) {
       $("message").className = "card status err";
-      $("message").textContent = `AttachmentGuard needs read access to this PDF host before it can load the document. Permission was not granted.${access.pattern ? `\nRequested: ${access.pattern}` : ""}`;
+      $("message").textContent = `AttachmentGuard needs read access to this PDF host. Permission was not granted.${access.pattern ? `\nRequested: ${access.pattern}` : ""}`;
       return;
     }
   }
@@ -129,7 +144,6 @@ async function openEditor(sourceUrl = "") {
 function renderCandidates(items) {
   const unique = [];
   const seen = new Set();
-
   if (currentTab?.url && looksPdf(currentTab.url)) {
     unique.push({ url: currentTab.url, kind: "current tab" });
     seen.add(currentTab.url);
@@ -144,7 +158,7 @@ function renderCandidates(items) {
   const box = $("candidates");
   if (!unique.length) {
     box.className = "status muted";
-    box.innerHTML = "No obvious PDF URL was detected on this page.<br><br>You can still try the current tab URL or open a local PDF.";
+    box.innerHTML = "No ordinary PDF link was found on this webpage.<br><br>PDF responses with Content-Type application/pdf are opened directly by AttachmentGuard automatically.";
     return;
   }
 
@@ -162,10 +176,37 @@ function renderCandidates(items) {
   });
 }
 
+async function refreshHandlerStatus() {
+  if (!chrome.mimeHandler) {
+    $("handlerStatus").textContent = "Unavailable. AttachmentGuard's automatic PDF stream handler requires Chrome 151 or newer.";
+    $("handlerToggleBtn").textContent = "PDF handler unavailable";
+    $("handlerToggleBtn").disabled = true;
+    return;
+  }
+  try {
+    const options = await chrome.mimeHandler.getMimeHandlerOptions("application/pdf");
+    const enabled = options.enabled !== false;
+    $("handlerStatus").textContent = enabled
+      ? "ON ✅ Real application/pdf responses open directly in AttachmentGuard, including top-level and embedded PDFs."
+      : "OFF. Chrome's normal PDF viewer is currently handling PDFs.";
+    $("handlerToggleBtn").textContent = enabled ? "Use Chrome viewer instead" : "Use AttachmentGuard for PDFs";
+    $("handlerToggleBtn").disabled = false;
+    $("handlerToggleBtn").dataset.enabled = String(enabled);
+  } catch (error) {
+    $("handlerStatus").textContent = `Could not read PDF handler status: ${error.message}`;
+  }
+}
+
 async function detect() {
-  currentTab = await activeTab();
+  const context = await getInvocationContext();
+  const activeId = await activeTabId();
+  currentTab = context && context.id === activeId ? context : null;
+
   if (!currentTab) {
-    $("tabInfo").textContent = "No active tab.";
+    $("tabInfo").textContent = "Click the AttachmentGuard toolbar icon on the tab you want to scan. This grants temporary access only to that tab.";
+    $("candidates").className = "status muted";
+    $("candidates").textContent = "Waiting for a tab invocation…";
+    $("tryCurrentBtn").disabled = true;
     return;
   }
 
@@ -173,14 +214,20 @@ async function detect() {
   $("candidates").className = "status muted";
   $("candidates").textContent = "Scanning page…";
 
-  const items = currentTab.id ? await scanPage(currentTab.id) : [];
+  const items = await scanPage(currentTab.id);
   renderCandidates(items);
-
   $("tryCurrentBtn").disabled = !currentTab.url || !/^https?:|^file:/i.test(currentTab.url);
 }
 
+$("handlerToggleBtn").onclick = async () => {
+  if (!chrome.mimeHandler) return;
+  const enabled = $("handlerToggleBtn").dataset.enabled === "true";
+  await chrome.mimeHandler.setMimeHandlerOptions("application/pdf", { enabled: !enabled });
+  await refreshHandlerStatus();
+};
 $("refreshBtn").onclick = detect;
 $("tryCurrentBtn").onclick = () => currentTab?.url && openEditor(currentTab.url);
 $("localBtn").onclick = () => openEditor("");
 
+refreshHandlerStatus();
 detect();
