@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AttachmentGuard</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f6f8fc;--line:#dbe3ef;--muted:#64748b;--blue:#2563eb;--green:#15803d;--red:#b42318;--amber:#9a5b00}
+*{box-sizing:border-box}body{margin:0;padding:12px}.brand{font-size:19px;font-weight:850}.tag{font-size:9px;padding:3px 6px;border-radius:999px;background:#e8efff;color:#1d4ed8;vertical-align:2px}.sub{font-size:12px;color:var(--muted);margin:3px 0 12px}
+.card{background:#fff;border:1px solid var(--line);border-radius:13px;padding:11px;margin-bottom:9px}.status{font-size:12px;white-space:pre-wrap;line-height:1.45}.muted{color:var(--muted)}
+button{width:100%;border:0;border-radius:10px;min-height:42px;padding:9px 11px;background:#eef2f7;color:#172033;font-weight:750;cursor:pointer;margin-top:7px}button.primary{background:var(--blue);color:#fff}button:disabled{opacity:.45;cursor:not-allowed}
+.candidate{border:1px solid var(--line);border-radius:10px;padding:9px;margin-top:7px;background:#f8fafc}.candidate b{font-size:12px}.candidate .url{font-size:10px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}.pill{display:inline-block;font-size:9px;border-radius:999px;padding:3px 6px;background:#effaf3;color:#166534;margin-left:4px}
+.warn{background:#fff8eb;border-color:#efd19b;color:var(--amber)}.err{background:#fff1f0;border-color:#f2c7c4;color:var(--red)}
+hr{border:0;border-top:1px solid var(--line);margin:10px 0}
+</style>
+</head>
+<body>
+<div class="brand">AttachmentGuard <span class="tag">EXTENSION</span></div>
+<div class="sub">See a PDF mistake → open AttachmentGuard → edit → verify → save.</div>
+
+<div class="card">
+  <b>Current tab</b>
+  <div id="tabInfo" class="status muted" style="margin-top:6px">Detecting…</div>
+  <button id="refreshBtn">Refresh detection</button>
+</div>
+
+<div class="card">
+  <b>Detected PDF sources</b>
+  <div id="candidates" class="status muted" style="margin-top:6px">Scanning page…</div>
+</div>
+
+<div class="card">
+  <b>Other options</b>
+  <button id="tryCurrentBtn">Try current tab URL as PDF</button>
+  <button id="localBtn">Open a PDF from my computer</button>
+</div>
+
+<div id="message" class="card status muted">AttachmentGuard requests access only to the specific PDF website when you choose to edit it.</div>
+
+<script type="module" src="/src/sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+ATTACHMENTGUARD CHROME EXTENSION — EXACT INSTALL STEPS
+
+PART A — PUT SOURCE CODE ON GITHUB
+
+1. Download AttachmentGuard_Chrome_Extension_Source.zip from ChatGPT.
+2. Extract the ZIP on your computer.
+3. In GitHub, create a NEW repository:
+      attachmentguard-extension
+   Private is fine.
+4. In the new repository choose:
+      Add file → Upload files
+5. Upload EVERYTHING from inside the extracted folder.
+   Important: include the hidden `.github` folder.
+6. Commit the files to the main branch.
+
+PART B — LET GITHUB BUILD THE EXTENSION
+
+7. Open the repository's Actions tab.
+8. GitHub may ask you to enable workflows. Enable them.
+9. Open:
+      Build AttachmentGuard Chrome Extension
+10. If it did not start automatically:
+      Run workflow → Run workflow
+11. Wait until the workflow has a green check mark.
+12. Open that completed workflow run.
+13. Scroll to Artifacts.
+14. Download:
+      AttachmentGuard-Chrome-Extension
+15. GitHub downloads an artifact ZIP.
+16. Extract it.
+17. Inside it you will find:
+      AttachmentGuard-Chrome-Extension.zip
+18. Extract THAT ZIP too.
+   The final folder must directly contain:
+      manifest.json
+      editor.html
+      sidepanel.html
+      background.js
+      assets/
+      ...bundled JS files...
+
+PART C — INSTALL IT IN GOOGLE CHROME
+
+19. Open Google Chrome.
+20. Go to:
+      chrome://extensions
+21. Turn ON:
+      Developer mode
+   (top-right corner)
+22. Click:
+      Load unpacked
+23. Select the FINAL extracted extension folder — the folder that contains manifest.json.
+24. AttachmentGuard should appear in your extensions list.
+25. Pin AttachmentGuard from Chrome's puzzle-piece Extensions menu.
+
+PART D — FIRST TEST: DIRECT PDF
+
+26. Open a normal direct PDF URL in Chrome.
+27. Click the AttachmentGuard extension icon.
+28. The side panel opens.
+29. It should detect the current PDF URL.
+30. Click:
+      Edit this PDF
+31. Chrome may ask:
+      Allow AttachmentGuard to read and change data on [this site]?
+    Allow it. This gives access only to the source host you chose.
+32. The SAME TAB changes into the AttachmentGuard editor.
+33. PDFium should show:
+      ENGINE: PASS ✅
+34. The source PDF should load automatically.
+35. Click existing PDF text.
+36. Make a small edit.
+37. Apply.
+38. It must PASS the same strict PDF verification used by the website.
+39. Click:
+      Download corrected attachment
+40. Use:
+      Return to original page
+    to go back to where you were.
+
+PART E — TEST A PDF INSIDE A NORMAL WEBSITE
+
+41. Open a webpage that has an embedded/linked PDF.
+42. Click AttachmentGuard.
+43. The side panel scans:
+      embed
+      object
+      iframe
+      PDF links
+      obvious PDF network URLs
+44. Choose the detected PDF.
+45. Grant source-site access if Chrome asks.
+46. Edit and verify.
+
+PART F — LOCAL PDF FALLBACK
+
+47. Click AttachmentGuard on any page.
+48. Choose:
+      Open a PDF from my computer
+49. In the editor click:
+      Open PDF
+50. Select the local PDF.
+
+IMPORTANT CURRENT LIMITS
+
+A. If the PDF source starts with:
+      blob:
+   v0.1 will IDENTIFY it but will not fake support.
+   Blob capture is the next source adapter.
+
+B. “Save corrected PDF” works universally by producing the corrected PDF.
+   Automatically overwriting the original file on every website is NOT universal:
+   each site needs an adapter/API/upload workflow.
+
+C. We are building PDF first.
+   DOCX, XLSX and PPTX require separate document engines later.
+
+IF SOMETHING FAILS
+
+Send ChatGPT:
+1. Screenshot of chrome://extensions for AttachmentGuard
+2. Screenshot of the AttachmentGuard side panel
+3. Screenshot of the editor error
+4. If GitHub Actions failed, screenshot the RED step and its error text
+
+Do not rebuild PDFium. We fix only the failing extension/source adapter layer.
