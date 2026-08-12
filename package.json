@@ -1,12 +1,13 @@
 {
   "name": "attachmentguard-chrome-extension",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfium.mjs && vite",
     "build": "node scripts/copy-pdfium.mjs && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:pdfium": "node scripts/verify-pdfium-exports.mjs"
   },
   "dependencies": {
     "@embedpdf/pdfium": "2.14.4",

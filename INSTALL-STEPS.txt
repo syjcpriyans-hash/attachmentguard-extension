@@ -1,44 +1,120 @@
-ATTACHMENTGUARD v0.5 — UPDATE STEPS
+ATTACHMENTGUARD v0.7 — TEXT KERNEL v1
 
-1. Extract this ZIP.
-2. Open your EXISTING GitHub repository:
+PART 1 — UPDATE THE EXISTING GITHUB REPOSITORY
+
+1. Download and extract:
+   AttachmentGuard_Chrome_Extension_v0.7_TextKernel_v1.zip
+
+2. Open the SAME GitHub repository:
    attachmentguard-extension
-3. Replace repository files with everything from this ZIP.
-4. Commit to main.
+
+3. Replace the repository files with EVERYTHING from the extracted v0.7 folder.
+   Important new files:
+      src/text-kernel.js
+      tests/text-kernel.test.mjs
+      ACCEPTANCE-MATRIX.md
+
+4. Commit directly to main.
+
+PART 2 — BUILD
+
 5. Open GitHub → Actions.
-6. Wait for Build AttachmentGuard Chrome Extension to turn green.
-7. Open the successful run.
-8. Download artifact:
-   AttachmentGuard-Chrome-Extension
-9. Extract the artifact.
-10. Open chrome://extensions
-11. Remove the old AttachmentGuard extension OR click Remove, then Load unpacked.
-12. Select the new artifact folder containing manifest.json.
-13. Confirm version is 0.5.0.
 
-TEST 1 — ENTER
+6. Open:
+      Build AttachmentGuard Chrome Extension
 
-14. Open your invoice PDF.
-15. Click the pencil icon.
-16. Click a text object.
-17. Type the correction.
-18. Press Enter ONE TIME.
-19. Expected:
-      Saved ✓ — verified PDF edit
-    If the exact font is genuinely needed, the typed text must remain preserved while the font dialog is shown.
-    Canceling that dialog must return you to the same typed edit; you should not have to type it again.
+7. The build now has TWO mandatory engineering gates:
+      Verify packaged PDFium API compatibility
+      Text Kernel unit tests
 
-You can also click the blue ✓ beside the inline field instead of pressing Enter.
+8. Wait for the entire workflow to turn GREEN.
 
-TEST 2 — FILE NAME
+9. If EITHER compatibility or Text Kernel tests turn RED:
+      stop and send ChatGPT the failed test screenshot.
+   Do not install a red build.
 
-20. Click the PDF filename in the top-left toolbar.
-21. Replace it, for example:
-      Invoice 34413 - Corrected.pdf
-22. Press Enter.
-23. Click Save.
-24. Chrome Save As should already contain:
-      Invoice 34413 - Corrected.pdf
+10. Open the green workflow run.
 
-Shortcut:
-Ctrl+S = Save corrected PDF with the current toolbar filename.
+11. Download the artifact:
+      AttachmentGuard-Chrome-Extension
+
+12. Extract the artifact.
+
+PART 3 — INSTALL
+
+13. Open:
+      chrome://extensions
+
+14. Remove the old AttachmentGuard development extension.
+
+15. Click:
+      Load unpacked
+
+16. Choose the extracted artifact folder containing:
+      manifest.json
+
+17. Confirm:
+      Version 0.7.0
+
+PART 4 — FIRST ACCEPTANCE TEST
+
+18. Open the Western Logistics PDF where earlier AttachmentGuard selected half-words.
+
+19. Click the pencil icon.
+
+20. Hover:
+      ADVANCE
+   or another visibly fragmented word.
+
+21. Expected:
+      one blue hit area covers the COMPLETE WORD.
+   It must not expose ADV / ANCE / half-word fragments.
+
+22. Click the word.
+   The inline input must contain the complete visible word.
+
+23. Replace it with a SAME-LENGTH test first.
+   Example:
+      ADVANCE → COMPANY
+   (Use any sensible same-length test available in your PDF.)
+
+24. Press Enter ONCE.
+
+25. Expected:
+      Saved ✓ — verified full-word edit
+
+26. Save the PDF and reopen it.
+
+PART 5 — DIFFERENT-LENGTH TEST
+
+27. Repeat with a shorter or longer replacement.
+
+28. Acceptable professional outcomes:
+   A. PASS — if exact font metrics + layout allow the edit.
+   B. BLOCK — with a precise fixed-field/collision/font reason.
+   NOT acceptable:
+   - half-word selection
+   - silent corruption
+   - lost neighboring text
+   - random repositioning
+   - retry/cancel loop
+
+PART 6 — MAIL PREVIEW
+
+29. Gmail / Zoho / Outlook preview support from v0.6 remains included.
+30. Open a received PDF attachment preview.
+31. Use the AttachmentGuard Edit PDF control when shown.
+32. The same Text Kernel v1 runs inside that PDF viewer.
+
+PART 7 — DO NOT ADD MORE FEATURES YET
+
+Before Add Text / Signature / Highlight / Redact, use ACCEPTANCE-MATRIX.md and test the kernel across different real PDFs.
+
+Send ChatGPT:
+- screenshots of any wrong selection
+- the exact PDF if possible
+- the word you clicked
+- the replacement you entered
+- the exact blocker/error
+
+We fix the kernel category, not the individual document.

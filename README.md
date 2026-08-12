@@ -1,49 +1,69 @@
-# AttachmentGuard v0.5 — Reliable Inline Commit + Editable Filename
+# AttachmentGuard v0.7 — Text Kernel v1
 
-This is an incremental reliability release on top of the working v0.4 native-look PDF viewer.
-The PDFium/font engine architecture is unchanged.
+This release intentionally stops expanding features and replaces the old heuristic text-object grouping layer with a character-stream text kernel.
 
-## Fixed: first-Enter commit reliability
+## Why
 
-Inline editing now has one transaction path shared by:
-- Enter
-- the visible ✓ save button
+A visible word can be split across many PDF text objects. Conversely, one PDF text object can contain several visible words. PDF text objects therefore cannot be the end-user selection model.
 
-Reliability protections:
-- commit lock prevents duplicate Enter/key-repeat transactions
-- composition/IME-safe Enter handling
-- latest input value is read after a microtask
-- inline input stays visible until PDFium save/reopen verification passes
-- failed verification keeps the user's typed correction in place
-- if an exact font is required, the typed correction is preserved while font resolution runs
-- canceling the font-resolution dialog returns to the same typed inline edit instead of forcing the user to start again
+Text Kernel v1 uses PDFium's character stream:
+- Unicode per character
+- page character index
+- character bounding box
+- character origin
+- character rotation
+- associated underlying PDF text object
+- object-relative character offset
 
-## Added: editable filename
+The UI is then built from complete **words**, not raw PDF objects.
 
-The filename in the top-left toolbar is now an input.
-Click it, type the desired output name, and press Enter or click elsewhere.
+## Edit algorithm
 
-AttachmentGuard:
-- removes characters illegal in Windows filenames
-- ensures `.pdf`
-- prevents reserved Windows device names
-- uses the edited filename in `chrome.downloads.download`
-- opens Chrome Save As with that filename pre-filled
+1. Click complete visible word.
+2. Kernel maps every selected character back to the exact underlying PDF object + offset.
+3. Build a transactional replacement plan.
+4. Rewrite only the selected range:
+   - preserve unrelated prefix/suffix text
+   - preserve unrelated prefix/suffix characters in the underlying text object
+   - verify after save that the complete primary object still contains the exact expected prefix + replacement + suffix
+   - secondary fragmented objects must be fully selected or the edit is blocked
+5. Save a temporary PDF.
+6. Reopen it.
+7. Find the replacement through PDFium's text search.
+8. Verify Unicode + font/style/transform.
+9. Render before/after with PDFium and compare pixels outside the edited region.
+10. Commit only if every check passes.
 
-Ctrl+S also saves using the current edited filename.
+## What is intentionally blocked
 
-## Test
+Text Kernel v1 blocks rather than guesses when:
+- a single word contains mixed formatting
+- rotated text needs rewriting
+- PDF character offsets cannot be mapped to the underlying object
+- a fragmented word crosses an object that also contains unrelated text
+- exact font metrics are unavailable for a variable-length partial edit
+- a replacement would overlap a fixed suffix or neighboring object
+- post-save structural/pixel verification fails
 
-1. Open a PDF.
-2. Click pencil.
-3. Click a text object.
-4. Type a replacement.
-5. Press Enter ONCE.
-6. It should either:
-   - save and show `Saved ✓ — verified PDF edit`, or
-   - keep the exact typed edit visible and explain the precise verification/font blocker.
-   It should never silently discard the typed correction.
-7. Rename the PDF in the top-left filename field.
-8. Press Enter.
-9. Click Save.
-10. Chrome's Save As dialog should be pre-filled with the new filename.
+These are product safeguards, not silent failures.
+
+## Existing features retained
+
+- native-looking PDF viewer
+- Chrome PDF MIME handling
+- direct inline editing
+- exact-font resolver
+- browser-local Font Vault
+- editable output filename
+- save/download
+- undo
+- Gmail / Zoho / Outlook mail-preview bridge
+
+
+## PDFium compatibility gate
+
+AttachmentGuard does not assume that every API documented in current upstream PDFium is present in the npm-packaged WASM.
+
+Every GitHub build now compiles the actual `pdfium.wasm` module and verifies the exact exports the Text Kernel requires. A missing engine function makes the build RED before an extension artifact is produced.
+
+This prevents us from shipping source code against an API that is not actually packaged in our production WASM.

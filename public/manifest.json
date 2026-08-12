@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "AttachmentGuard",
   "short_name": "AttachGuard",
-  "version": "0.5.0",
-  "description": "View PDFs normally in Chrome, edit existing PDF text inline reliably, rename the output file, verify with PDFium, and save.",
+  "version": "0.7.0",
+  "description": "Professional PDF text kernel: full-word character-stream selection, strict existing-text editing, inline rename, mail-preview bridge, and verified PDF save.",
   "minimum_chrome_version": "151",
   "permissions": [
     "storage",
@@ -24,5 +24,24 @@
       "handler_url": "viewer.html",
       "can_embed": true
     }
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://mail.zoho.com/*",
+        "https://mail.zoho.eu/*",
+        "https://mail.zoho.in/*",
+        "https://mail.zoho.ca/*",
+        "https://outlook.live.com/*",
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*"
+      ],
+      "js": [
+        "mail-preview.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
 }

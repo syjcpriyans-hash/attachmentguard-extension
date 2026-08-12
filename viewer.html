@@ -66,6 +66,9 @@ body.editing .text-layer{pointer-events:auto}
 body.editing .text-hit:hover{
   border-color:#1a73e8;background:rgba(26,115,232,.08)
 }
+body.editing .text-hit.kernel-blocked:hover{
+  border-color:#f9ab00;background:rgba(249,171,0,.10);cursor:not-allowed
+}
 .inline-editor{
   position:absolute;z-index:15;background:#fff;color:#111;border:2px solid #1a73e8;border-radius:2px;
   padding:1px 3px;box-shadow:0 2px 8px rgba(0,0,0,.28);outline:none;min-width:50px;
@@ -142,7 +145,7 @@ body.editing .edit-banner{display:block}
   <div class="toolbar">
     <div class="leftbar">
       <button class="iconbtn" title="Menu">☰</button>
-      <input id="filename" class="filename filename-input" value="PDF" spellcheck="false" aria-label="PDF filename" title="Click to rename the downloaded PDF">
+      <span style="font-size:9px;color:#8ab4f8;border:1px solid #5f6368;border-radius:10px;padding:2px 5px">TEXT KERNEL v1</span><input id="filename" class="filename filename-input" value="PDF" spellcheck="false" aria-label="PDF filename" title="Click to rename the downloaded PDF">
     </div>
     <div class="centerbar">
       <input id="pageInput" class="pagebox" value="1" aria-label="Current page">
@@ -166,7 +169,7 @@ body.editing .edit-banner{display:block}
   </div>
 </div>
 
-<div class="edit-banner">Inline edit mode — click text, type, press Enter to save · Esc to cancel</div>
+<div class="edit-banner">Text Kernel v1 — click a complete word, type, press Enter to verify & save · orange = safely blocked</div>
 <div id="toast" class="toast"></div>
 <div id="loading" class="loading"><div><div class="spinner"></div><div id="loadingText">Opening PDF with AttachmentGuard…</div></div></div>
 

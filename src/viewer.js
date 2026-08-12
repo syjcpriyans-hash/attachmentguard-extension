@@ -1,6 +1,7 @@
 import { init } from "@embedpdf/pdfium";
 import opentype from "opentype.js";
 import { vaultCount, vaultList, vaultPut } from "./font-vault.js";
+import { segmentWords, planWordReplacement, KernelError } from "./text-kernel.js";
 
 const WASM_URL = chrome.runtime.getURL("assets/pdfium.wasm");
 const TEXT = 1, FONT_TRUETYPE = 2, FONT_TYPE1 = 1;
@@ -14,7 +15,7 @@ const cpLabel = ch => `${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase().p
 const S = {
   m:null, bytes:null, originalBytes:null, doc:0, ptr:0, pages:0, name:"document.pdf",
   originalUrl:"", tabId:null, zoom:1, fitScale:1, editMode:false, dirty:false,
-  pageMetrics:[], history:[], currentPage:0, inline:null, pendingFont:null, resolvedFont:null, commitBusy:false, filenameOriginal:""
+  pageMetrics:[], history:[], currentPage:0, inline:null, pendingFont:null, resolvedFont:null, commitBusy:false, filenameOriginal:"", kernels:new Map()
 };
 
 function rt(){
@@ -22,7 +23,7 @@ function rt(){
   return {
     malloc:n=>{const x=p.wasmExports.malloc(n);if(!x&&n)throw Error("PDFium out of memory");return x},
     free:x=>x&&p.wasmExports.free(x),heap:()=>p.HEAPU8,gf:x=>p.getValue(x,"float"),
-    gi:x=>p.getValue(x,"i32"),sf:(p2,v)=>p.setValue(p2,v,"float"),
+    gi:x=>p.getValue(x,"i32"),gd:x=>p.getValue(x,"double"),sf:(p2,v)=>p.setValue(p2,v,"float"),
     u16:x=>p.UTF16ToString(x),u8:x=>p.UTF8ToString(x),w16:(s,p2,n)=>p.stringToUTF16(s,p2,n)
   };
 }
@@ -145,6 +146,87 @@ function listObjects(doc,pageIndex){
     return out
   }finally{S.m.FPDFText_ClosePage(tp);S.m.FPDF_ClosePage(page)}
 }
+
+function colorEq(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+function linearMatrixEq(a,b){return[0,1,2,3].every(i=>Math.abs((a?.[i]??0)-(b?.[i]??0))<0.001)}
+function sameVisualStyle(a,b){
+  return sameIdentity(a,b)&&Math.abs(a.size-b.size)<0.2&&a.render===b.render
+    &&Math.abs(a.strokeWidth-b.strokeWidth)<0.05&&colorEq(a.fill,b.fill)&&colorEq(a.stroke,b.stroke)
+    &&linearMatrixEq(a.matrix,b.matrix)
+}
+function styleKey(s){
+  const m=s.matrix||[1,0,0,1,0,0];
+  return [
+    norm(s.fontName),norm(s.family),Number(s.size).toFixed(2),s.weight,s.italic,s.render,
+    JSON.stringify(s.fill),JSON.stringify(s.stroke),Number(s.strokeWidth).toFixed(3),
+    ...m.slice(0,4).map(v=>Number(v).toFixed(4))
+  ].join("|")
+}
+function readCharBox(tp,index){
+  const r=rt(),p=r.malloc(32);
+  try{
+    if(!S.m.FPDFText_GetCharBox(tp,index,p,p+8,p+16,p+24))return null;
+    return{left:r.gd(p),right:r.gd(p+8),bottom:r.gd(p+16),top:r.gd(p+24)}
+  }finally{r.free(p)}
+}
+function readCharOrigin(tp,index){
+  const r=rt(),p=r.malloc(16);
+  try{
+    if(!S.m.FPDFText_GetCharOrigin(tp,index,p,p+8))return null;
+    return{x:r.gd(p),y:r.gd(p+8)}
+  }finally{r.free(p)}
+}
+
+function buildPageKernel(doc,pageIndex){
+  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)return{characters:[],words:[],objects:new Map()};
+  const tp=S.m.FPDFText_LoadPage(page),objects=new Map(),handleToIndex=new Map();
+  try{
+    const objectCount=S.m.FPDFPage_CountObjects(page);
+    for(let i=0;i<objectCount;i++){
+      const obj=S.m.FPDFPage_GetObject(page,i);
+      if(!obj||S.m.FPDFPageObj_GetType(obj)!==TEXT)continue;
+      handleToIndex.set(obj,i);
+      const style=readStyle(obj),text=readText(obj,tp),cp=Array.from(text);
+      objects.set(i,{index:i,handle:obj,text,style,bounds:readBounds(obj)})
+    }
+
+    const offsets=new Map(),characters=[],count=S.m.FPDFText_CountChars(tp);
+    for(let i=0;i<count;i++){
+      const cp=S.m.FPDFText_GetUnicode(tp,i);
+      const unicode=cp?String.fromCodePoint(cp):"";
+      const obj=S.m.FPDFText_GetTextObject(tp,i);
+      const objIndex=obj?handleToIndex.get(obj):null;
+      let objOffset=null;
+      if(objIndex!=null){
+        objOffset=offsets.get(objIndex)||0;
+        offsets.set(objIndex,objOffset+1)
+      }
+      const box=readCharBox(tp,i);
+      const origin=readCharOrigin(tp,i);
+      const rec=objIndex!=null?objects.get(objIndex):null;
+      const generated=typeof S.m.FPDFText_IsGenerated==="function"?S.m.FPDFText_IsGenerated(tp,i)===1:false;
+      const mapError=typeof S.m.FPDFText_HasUnicodeMapError==="function"?S.m.FPDFText_HasUnicodeMapError(tp,i):0;
+      const angle=typeof S.m.FPDFText_GetCharAngle==="function"?S.m.FPDFText_GetCharAngle(tp,i):0;
+      if(!box||!origin)continue;
+      const ch={
+        streamIndex:i,unicode,objIndex,objOffset,generated,mapError,angle,
+        fontSize:S.m.FPDFText_GetFontSize(tp,i),box,origin,
+        styleKey:rec?styleKey(rec.style):""
+      };
+      characters.push(ch);
+    }
+
+
+    const words=segmentWords(characters).map(word=>{
+      const firstSlice=word.slices[0],rec=firstSlice?objects.get(firstSlice.objIndex):null;
+      return{...word,page:pageIndex,style:rec?.style||null,objectRecords:objects}
+    });
+    return{characters,words,objects}
+  }finally{
+    S.m.FPDFText_ClosePage(tp);S.m.FPDF_ClosePage(page)
+  }
+}
+
 function fontFingerprint(font){
   const bytes=fontData(font);if(!bytes)return"no-font-data";
   let h=2166136261,step=Math.max(1,Math.floor(bytes.length/8192));
@@ -258,6 +340,7 @@ function setText(o,text){
   const r=rt(),n=(text.length+1)*2,p=r.malloc(n);
   try{r.w16(text,p,n);if(!S.m.FPDFText_SetText(o,p))throw Error("FPDFText_SetText failed")}finally{r.free(p)}
 }
+
 function fontType(bytes){
   if(bytes.length<4)return FONT_TRUETYPE;const s=String.fromCharCode(...bytes.slice(0,4));
   return(s==="OTTO"||s==="typ1")?FONT_TYPE1:FONT_TRUETYPE
@@ -284,6 +367,48 @@ function rebuildWithFont(doc,page,obj,fontBytes,newText){
     if(newObj&&!inserted)S.m.FPDFPageObj_Destroy(newObj);if(font)S.m.FPDFFont_Close(font);throw e
   }finally{r.free(p)}
 }
+function renderDocBitmap(doc,pageIndex,scale=1){
+  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)throw Error("Cannot render verification page");
+  try{
+    const wpt=S.m.FPDF_GetPageWidthF(page),hpt=S.m.FPDF_GetPageHeightF(page);
+    const w=Math.max(1,Math.floor(wpt*scale)),h=Math.max(1,Math.floor(hpt*scale)),r=rt(),buf=r.malloc(w*h*4);
+    const bm=S.m.FPDFBitmap_CreateEx(w,h,4,buf,w*4);if(!bm){r.free(buf);throw Error("Could not create verification bitmap")}
+    try{
+      S.m.FPDFBitmap_FillRect(bm,0,0,w,h,0xffffffff);
+      S.m.FPDF_RenderPageBitmap(bm,page,0,0,w,h,0,16);
+      return{width:w,height:h,pageWidth:wpt,pageHeight:hpt,scale,rgba:r.heap().slice(buf,buf+w*h*4)}
+    }finally{S.m.FPDFBitmap_Destroy(bm);r.free(buf)}
+  }finally{S.m.FPDF_ClosePage(page)}
+}
+function unionRect(a,b){
+  return{left:Math.min(a.left,b.left),bottom:Math.min(a.bottom,b.bottom),right:Math.max(a.right,b.right),top:Math.max(a.top,b.top)}
+}
+function collateralPixelDiff(before,after,region,pad=5){
+  if(before.width!==after.width||before.height!==after.height)return Infinity;
+  const scale=before.scale;
+  const left=Math.max(0,Math.floor((region.left-pad)*scale));
+  const right=Math.min(before.width-1,Math.ceil((region.right+pad)*scale));
+  const top=Math.max(0,Math.floor((before.pageHeight-(region.top+pad))*scale));
+  const bottom=Math.min(before.height-1,Math.ceil((before.pageHeight-(region.bottom-pad))*scale));
+  let changed=0;
+  for(let y=0;y<before.height;y++){
+    for(let x=0;x<before.width;x++){
+      if(x>=left&&x<=right&&y>=top&&y<=bottom)continue;
+      const k=(y*before.width+x)*4;
+      if(
+        Math.abs(before.rgba[k]-after.rgba[k])>12||
+        Math.abs(before.rgba[k+1]-after.rgba[k+1])>12||
+        Math.abs(before.rgba[k+2]-after.rgba[k+2])>12||
+        Math.abs(before.rgba[k+3]-after.rgba[k+3])>12
+      ){
+        changed++;
+        if(changed>24)return changed
+      }
+    }
+  }
+  return changed
+}
+
 function saveDoc(doc){
   const r=rt(),w=S.m.PDFiumExt_OpenFileWriter();if(!w)throw Error("Could not create PDF writer");
   try{
@@ -297,24 +422,73 @@ function tempOpen(bytes){
   const d=S.m.FPDF_LoadMemDocument(p,bytes.length,0);if(!d){r.free(p);throw Error("Working-copy open failed")}
   return{doc:d,close(){S.m.FPDF_CloseDocument(d);r.free(p)}}
 }
-function findByTextGeom(doc,pageIndex,text,near){
-  const arr=listObjects(doc,pageIndex).filter(o=>o.text===text);
-  arr.sort((a,b)=>overlapArea(near,b.bounds)-overlapArea(near,a.bounds));return arr[0]||null
-}
-function unicodeAudit(doc,pageIndex,objIndex){
-  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)return{text:"",mapErrors:1,zeroUnicode:1};
-  const target=S.m.FPDFPage_GetObject(page,objIndex),tp=S.m.FPDFText_LoadPage(page);
-  let text="",mapErrors=0,zeroUnicode=0;
+function findTextRange(doc,pageIndex,text,near){
+  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)return null;
+  const tp=S.m.FPDFText_LoadPage(page),r=rt(),n=(text.length+1)*2,p=r.malloc(n);
   try{
-    const n=S.m.FPDFText_CountChars(tp);
-    for(let i=0;i<n;i++){
-      if(S.m.FPDFText_GetTextObject(tp,i)!==target)continue;
-      const cp=S.m.FPDFText_GetUnicode(tp,i),err=typeof S.m.FPDFText_HasUnicodeMapError==="function"?S.m.FPDFText_HasUnicodeMapError(tp,i):0;
+    const handleToIndex=new Map(),objectCount=S.m.FPDFPage_CountObjects(page);
+    for(let i=0;i<objectCount;i++)handleToIndex.set(S.m.FPDFPage_GetObject(page,i),i);
+
+    r.w16(text,p,n);
+    const handle=S.m.FPDFText_FindStart(tp,p,1,0); // FPDF_MATCHCASE
+    if(!handle)return null;
+
+    let best=null,bestScore=-Infinity;
+    try{
+      while(S.m.FPDFText_FindNext(handle)){
+        const start=S.m.FPDFText_GetSchResultIndex(handle),count=S.m.FPDFText_GetSchCount(handle);
+        const boxes=[];let firstObjIndex=null;
+        for(let i=start;i<start+count;i++){
+          const b=readCharBox(tp,i);if(b)boxes.push(b);
+          if(firstObjIndex==null){
+            const o=S.m.FPDFText_GetTextObject(tp,i);
+            if(o)firstObjIndex=handleToIndex.get(o)??null
+          }
+        }
+        if(!boxes.length)continue;
+        const bounds={
+          left:Math.min(...boxes.map(b=>b.left)),
+          bottom:Math.min(...boxes.map(b=>b.bottom)),
+          right:Math.max(...boxes.map(b=>b.right)),
+          top:Math.max(...boxes.map(b=>b.top))
+        };
+        const overlap=overlapArea(near,bounds);
+        const dx=Math.abs(((near.left+near.right)-(bounds.left+bounds.right))/2);
+        const dy=Math.abs(((near.top+near.bottom)-(bounds.top+bounds.bottom))/2);
+        const score=overlap*1000-dx-dy;
+        if(score>bestScore){
+          best={start,count,bounds,objIndex:firstObjIndex};
+          bestScore=score
+        }
+      }
+    }finally{S.m.FPDFText_FindClose(handle)}
+    return best
+  }finally{r.free(p);S.m.FPDFText_ClosePage(tp);S.m.FPDF_ClosePage(page)}
+}
+
+function unicodeAuditRange(doc,pageIndex,start,count){
+  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)return{text:"",mapErrors:1,zeroUnicode:1};
+  const tp=S.m.FPDFText_LoadPage(page);let text="",mapErrors=0,zeroUnicode=0;
+  try{
+    for(let i=start;i<start+count;i++){
+      const cp=S.m.FPDFText_GetUnicode(tp,i);
+      const err=typeof S.m.FPDFText_HasUnicodeMapError==="function"?S.m.FPDFText_HasUnicodeMapError(tp,i):0;
       if(err!==0)mapErrors++;if(!cp)zeroUnicode++;else text+=String.fromCodePoint(cp)
     }
     return{text,mapErrors,zeroUnicode}
   }finally{S.m.FPDFText_ClosePage(tp);S.m.FPDF_ClosePage(page)}
 }
+
+function readObjectSnapshot(doc,pageIndex,objIndex){
+  const page=S.m.FPDF_LoadPage(doc,pageIndex);if(!page)return null;
+  const tp=S.m.FPDFText_LoadPage(page);
+  try{
+    const obj=S.m.FPDFPage_GetObject(page,objIndex);
+    if(!obj||S.m.FPDFPageObj_GetType(obj)!==TEXT)return null;
+    return{text:readText(obj,tp),style:readStyle(obj),bounds:readBounds(obj)}
+  }finally{S.m.FPDFText_ClosePage(tp);S.m.FPDF_ClosePage(page)}
+}
+
 function compareStyles(a,b,resolved){
   const c=[],push=(n,v)=>c.push([n,!!v]);
   push("Font identity preserved",sameIdentity(a,b));push("Font size preserved",Math.abs(a.size-b.size)<.03);
@@ -325,37 +499,118 @@ function compareStyles(a,b,resolved){
   if(resolved)push("Resolved font embedded",b.embedded===1);return c
 }
 async function editTransaction(selected,newText,resolverOverride=null){
-  const pf=embeddedPreflight(selected,newText);let resolver=resolverOverride,mode="same PDF text object";
+  if(!selected?.editable){
+    throw new KernelError("KERNEL_UNSUPPORTED_SELECTION",selected?.reason||"This word is not safely editable.");
+  }
+
+  const pf=embeddedPreflight(selected,newText);
+  let resolver=resolverOverride,mode="Text Kernel range edit";
   if(selected.style.embedded!==1||!pf.parsed.ok||pf.missing.length){
     resolver=resolver||findInPdf(selected.style,newText)||await findInVault(selected.style,newText);
     if(!resolver?.ok){
       const err=new Error(`Exact font required for: ${pf.missing.map(cpLabel).join(", ")||stripSubset(selected.style.fontName)}`);
       err.code="EXACT_FONT_REQUIRED";err.preflight=pf;throw err
     }
-    mode=`exact-font rebuild (${resolver.source})`
+    mode=`Text Kernel exact-font range rebuild (${resolver.source})`
   }
+
   const wk=tempOpen(S.bytes);
   try{
+    const beforeBitmap=renderDocBitmap(wk.doc,selected.page,1);
     const page=S.m.FPDF_LoadPage(wk.doc,selected.page);if(!page)throw Error("Could not load page");
-    let edited=null,loadedFont=0,origStyle,origBounds=selected.bounds;
+    let edited=null,loadedFont=0,origStyle=null,origObjectBounds=null,expectedPrimaryText="";
     try{
-      const obj=S.m.FPDFPage_GetObject(page,selected.index);if(!obj||S.m.FPDFPageObj_GetType(obj)!==TEXT)throw Error("Text object changed; click it again");
-      origStyle=readStyle(obj);const others=listObjects(wk.doc,selected.page).filter(o=>o.index!==selected.index);
-      if(!resolver){setText(obj,newText);edited=obj}else{const r=rebuildWithFont(wk.doc,page,obj,resolver.bytes,newText);edited=r.obj;loadedFont=r.font}
-      try{if(!S.m.FPDFPage_GenerateContent(page))throw Error("Could not regenerate PDF page content")}
-      finally{if(loadedFont)S.m.FPDFFont_Close(loadedFont)}
-      const after=readBounds(edited),collision=newCollision(origBounds,after,others);
-      if(collision)throw Error(`Edit blocked: new text would overlap "${collision.text}"`)
+      const freshKernel=buildPageKernel(wk.doc,selected.page);
+      const records=freshKernel.objects;
+      const plan=planWordReplacement(selected,newText,records);
+      const primaryAction=plan.primary;
+      const primaryRec=records.get(primaryAction.objIndex);
+      if(!primaryRec)throw new KernelError("KERNEL_PRIMARY_MISSING","Primary PDF text object is unavailable.");
+
+      origStyle=primaryRec.style;
+      origObjectBounds=primaryRec.bounds;
+      expectedPrimaryText=primaryAction.newText;
+
+      if(!selected.style||!sameVisualStyle(origStyle,selected.style)){
+        throw new KernelError("KERNEL_STYLE_CHANGED","The PDF text style changed between selection and commit. Click the word again.");
+      }
+
+      const handles=new Map();
+      for(const action of plan.actions){
+        const h=S.m.FPDFPage_GetObject(page,action.objIndex);
+        if(!h||S.m.FPDFPageObj_GetType(h)!==TEXT){
+          throw new KernelError("KERNEL_OBJECT_CHANGED","An underlying PDF text object changed. Click the word again.");
+        }
+        handles.set(action.objIndex,h)
+      }
+
+      const selectedSet=new Set(plan.actions.map(a=>a.objIndex));
+      const others=listObjects(wk.doc,selected.page).filter(o=>!selectedSet.has(o.index));
+
+      const primaryObj=handles.get(primaryAction.objIndex);
+      if(resolver){
+        const rebuilt=rebuildWithFont(wk.doc,page,primaryObj,resolver.bytes,primaryAction.newText);
+        edited=rebuilt.obj;loadedFont=rebuilt.font;
+      }else{
+        setText(primaryObj,primaryAction.newText);
+        edited=primaryObj
+      }
+
+      // Secondary objects are only removed when the kernel proved that the
+      // entire object consists of selected fragments. Otherwise planning blocks.
+      for(const action of plan.actions.slice(1)){
+        if(!action.removeObject){
+          throw new KernelError("KERNEL_SECONDARY_REWRITE_UNSUPPORTED","A secondary PDF object would need a partial rewrite; blocked.");
+        }
+        const extra=handles.get(action.objIndex);
+        if(!S.m.FPDFPage_RemoveObject(page,extra))throw Error("Could not remove a selected PDF text fragment");
+        S.m.FPDFPageObj_Destroy(extra)
+      }
+
+      try{
+        if(!S.m.FPDFPage_GenerateContent(page))throw Error("Could not regenerate PDF page content")
+      }finally{
+        if(loadedFont)S.m.FPDFFont_Close(loadedFont)
+      }
+
+      const afterObjectBounds=readBounds(edited);
+      if(!afterObjectBounds)throw Error("Edited text-object bounds are unavailable");
+
+      const collision=newCollision(origObjectBounds,afterObjectBounds,others);
+      if(collision){
+        throw new KernelError("KERNEL_COLLISION",`Replacement would overlap "${collision.text}"`);
+      }
     }finally{S.m.FPDF_ClosePage(page)}
+
     const out=saveDoc(wk.doc),vr=tempOpen(out);
     try{
-      const found=findByTextGeom(vr.doc,selected.page,newText,origBounds);if(!found)throw Error("Saved edit could not be found after reopening PDF");
-      const audit=unicodeAudit(vr.doc,selected.page,found.index),checks=compareStyles(origStyle,found.style,!!resolver);
-      checks.push(["Text saved exactly",found.text===newText]);
+      const match=findTextRange(vr.doc,selected.page,newText,selected.bounds);
+      if(!match)throw Error("Saved PDF reopened, but the replacement text could not be located.");
+      if(match.objIndex==null)throw Error("Saved replacement is not associated with a PDF text object.");
+
+      const audit=unicodeAuditRange(vr.doc,selected.page,match.start,match.count);
+      const saved=readObjectSnapshot(vr.doc,selected.page,match.objIndex);
+      if(!saved)throw Error("Saved primary PDF text object could not be reopened.");
+
+      const checks=compareStyles(origStyle,saved.style,!!resolver);
+      checks.push(["Replacement text found after save/reopen",true]);
+      checks.push(["Unselected prefix/suffix preserved",saved.text===expectedPrimaryText]);
       checks.push(["Unicode mapping valid",audit.mapErrors===0&&audit.zeroUnicode===0]);
-      checks.push(["Unicode text matches",audit.text.replace(/\s/g,"")===newText.replace(/\s/g,"")]);
-      if(!resolver)checks.push(["Exact embedded font program preserved",fontFingerprint(origStyle.font)===fontFingerprint(found.style.font)]);
-      if(!checks.every(x=>x[1]))throw Error(`Verification failed: ${checks.filter(x=>!x[1]).map(x=>x[0]).join(", ")}`);
+      checks.push(["Unicode text matches",audit.text===newText]);
+      if(!resolver){
+        checks.push(["Exact embedded font program preserved",fontFingerprint(origStyle.font)===fontFingerprint(saved.style.font)]);
+      }
+
+      // Render both PDFs with the same PDFium engine. Changes outside the union
+      // of old/new word boxes are collateral damage and fail the transaction.
+      const afterBitmap=renderDocBitmap(vr.doc,selected.page,1);
+      const visualRegion=unionRect(selected.bounds,match.bounds);
+      const collateral=collateralPixelDiff(beforeBitmap,afterBitmap,visualRegion,3);
+      checks.push(["No collateral visual changes outside edited word",collateral<=24]);
+
+      if(!checks.every(x=>x[1])){
+        throw Error(`Verification failed: ${checks.filter(x=>!x[1]).map(x=>x[0]).join(", ")}`);
+      }
       return{out,mode,checks}
     }finally{vr.close()}
   }finally{wk.close()}
@@ -399,12 +654,12 @@ async function renderAll(){
     canvas.getContext("2d").putImageData(new ImageData(bmp.rgba,bmp.width,bmp.height),0,0);
 
     if(metric.rotation===0){
-      const objects=listObjects(S.doc,i);
+      const kernel=buildPageKernel(S.doc,i);S.kernels.set(i,kernel);const objects=kernel.words;
       for(const obj of objects){
-        const b=obj.bounds,hit=document.createElement("button");hit.className="text-hit";hit.title=S.editMode?`Edit: ${obj.text}`:"";
+        const b=obj.bounds,hit=document.createElement("button");hit.className=`text-hit ${obj.editable?"":"kernel-blocked"}`;hit.title=S.editMode?(obj.editable?`Edit full word: ${obj.text}`:`Blocked: ${obj.reason}`):"";
         hit.style.left=`${b.left*scale}px`;hit.style.top=`${(metric.height-b.top)*scale}px`;
         hit.style.width=`${Math.max(5,(b.right-b.left)*scale)}px`;hit.style.height=`${Math.max(7,(b.top-b.bottom)*scale)}px`;
-        hit.onclick=e=>{e.stopPropagation();if(S.editMode)startInline(obj,hit,shell,scale)};
+        hit.onclick=e=>{e.stopPropagation();if(!S.editMode)return;if(!obj.editable){toast(obj.reason||"This word is not safely editable","err");return}startInline(obj,hit,shell,scale)};
         layer.appendChild(hit)
       }
     }
@@ -521,7 +776,7 @@ async function commitInline(resolverOverride=null){
     const oldInline=S.inline;
     S.inline=null;S.commitBusy=false;removeInlineDom(oldInline);
     await renderAll();
-    toast("Saved ✓ — verified PDF edit","ok");
+    toast(selected.slices?.length>1?`Saved ✓ — full word verified across ${selected.slices.length} PDF runs`:"Saved ✓ — verified full-word edit","ok");
   }catch(e){
     S.commitBusy=false;
     if(e.code==="EXACT_FONT_REQUIRED"){
